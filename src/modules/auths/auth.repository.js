@@ -8,7 +8,8 @@ const AuthRepository = {
   async findByEmail(email) {
     const r = await query(
       `SELECT user_id, username, email, password_hash, full_name,
-              is_active, is_email_verified, failed_attempts, locked_until
+              is_active, is_email_verified, failed_attempts, locked_until,
+              password_reset_token, password_reset_expires
        FROM   users
        WHERE  email      = :email
          AND  deleted_at IS NULL`,
@@ -236,6 +237,44 @@ const AuthRepository = {
         userAgent: userAgent || null,
         detail:    detail    || null,
       }
+    );
+  },
+
+  // ── PASSWORD RESET ─────────────────────────────────────────
+  async createPasswordResetToken({ userId, token, expiresAt }) {
+    await query(
+      `UPDATE users
+       SET    password_reset_token   = :token,
+              password_reset_expires = :expiresAt,
+              updated_at             = SYSTIMESTAMP
+       WHERE  user_id = :userId`,
+      { userId, token, expiresAt }
+    );
+  },
+
+  async findByPasswordResetToken(token) {
+    const r = await query(
+      `SELECT user_id, username, email, password_reset_expires
+       FROM   users
+       WHERE  password_reset_token   = :token
+         AND  password_reset_expires > SYSTIMESTAMP
+         AND  deleted_at IS NULL`,
+      { token }
+    );
+    return r.rows[0] || null;
+  },
+
+  async updatePassword(userId, passwordHash) {
+    await query(
+      `UPDATE users
+       SET    password_hash          = :passwordHash,
+              password_reset_token   = NULL,
+              password_reset_expires = NULL,
+              failed_attempts        = 0,
+              locked_until           = NULL,
+              updated_at             = SYSTIMESTAMP
+       WHERE  user_id = :userId`,
+      { userId, passwordHash }
     );
   },
 };

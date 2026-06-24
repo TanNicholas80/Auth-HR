@@ -79,23 +79,70 @@ const logoutSchema = z.object({
     .min(1, 'refreshToken wajib diisi'),
 });
 
+const passwordFieldSchema = z
+  .string({ required_error: 'password wajib diisi' })
+  .min(8,  'password minimal 8 karakter')
+  .max(100,'password maksimal 100 karakter')
+  .regex(
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
+    'password harus mengandung huruf besar, huruf kecil, dan angka'
+  );
+
+const verifyResetTokenSchema = z.object({
+  token: z
+    .string({ required_error: 'token wajib diisi' })
+    .min(1, 'token wajib diisi'),
+});
+
+const resetPasswordBodySchema = z.object({
+  password: passwordFieldSchema,
+
+  confirmPassword: z
+    .string({ required_error: 'confirmPassword wajib diisi' })
+    .min(1, 'confirmPassword wajib diisi'),
+}).refine((data) => data.password === data.confirmPassword, {
+  message: 'confirmPassword harus sama dengan password',
+  path:    ['confirmPassword'],
+});
+
+const forgotPasswordBodySchema = z.object({
+  email: z
+    .string({ required_error: 'email wajib diisi' })
+    .email('format email tidak valid'),
+});
+
 // ── Middleware factory ────────────────────────────────────
 
 const validate = (schema) => (req, res, next) => {
   const result = schema.safeParse(req.body);
   if (!result.success) {
-    const errors = result.error.errors.map(e => e.message);
+    const issues = result.error?.issues ?? result.error?.errors ?? [];
+    const errors = issues.map((e) => e.message);
     return next(new AppError('Validasi gagal', 422, errors));
   }
-  req.body = result.data; // pakai data yang sudah di-sanitize Zod
+  req.body = result.data;
+  next();
+};
+
+const validateParams = (schema) => (req, res, next) => {
+  const result = schema.safeParse(req.params);
+  if (!result.success) {
+    const issues = result.error?.issues ?? result.error?.errors ?? [];
+    const errors = issues.map((e) => e.message);
+    return next(new AppError('Validasi gagal', 422, errors));
+  }
+  req.params = result.data;
   next();
 };
 
 module.exports = {
-  validateSignup:    validate(signupSchema),
-  validateLogin:     validate(loginSchema),
-  validateSendOtp:   validate(sendOtpSchema),
-  validateVerifyOtp: validate(verifyOtpSchema),
-  validateRefresh:   validate(refreshSchema),
-  validateLogout:    validate(logoutSchema),
+  validateSignup:          validate(signupSchema),
+  validateLogin:           validate(loginSchema),
+  validateSendOtp:         validate(sendOtpSchema),
+  validateVerifyOtp:       validate(verifyOtpSchema),
+  validateRefresh:         validate(refreshSchema),
+  validateLogout:            validate(logoutSchema),
+  validateResetTokenParam:   validateParams(verifyResetTokenSchema),
+  validateResetPasswordBody: validate(resetPasswordBodySchema),
+  validateForgotPasswordBody: validate(forgotPasswordBodySchema),
 };

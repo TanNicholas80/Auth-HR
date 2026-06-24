@@ -76,6 +76,34 @@ const AuthController = {
       response.success(res, data, 'Data user berhasil diambil');
     } catch (e) { next(e); }
   },
+
+  // POST /auth/forgot-password
+  async forgotPassword(req, res, next) {
+    try {
+      const { email } = req.body;
+      const data = await AuthService.forgotPassword({ email }, getMeta(req));
+      response.success(res, data, data.message);
+    } catch (e) { next(e); }
+  },
+
+  // GET /auth/reset-password/:token
+  async verifyResetToken(req, res, next) {
+    try {
+      const { token } = req.params;
+      const data = await AuthService.verifyResetToken({ token });
+      response.success(res, data, data.message);
+    } catch (e) { next(e); }
+  },
+
+  // POST /auth/reset-password/:token
+  async resetPassword(req, res, next) {
+    try {
+      const { token } = req.params;
+      const { password } = req.body;
+      const data = await AuthService.resetPassword({ token, password }, getMeta(req));
+      response.success(res, data, data.message);
+    } catch (e) { next(e); }
+  },
 };
 
 module.exports = AuthController;

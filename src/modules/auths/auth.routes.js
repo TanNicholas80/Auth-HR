@@ -7,6 +7,9 @@ const {
   validateVerifyOtp,
   validateRefresh,
   validateLogout,
+  validateResetTokenParam,
+  validateResetPasswordBody,
+  validateForgotPasswordBody,
 } = require('./auth.validator');
 const authenticate = require('../../shared/middlewares/authenticate');
 
@@ -36,6 +39,37 @@ router.post('/send-otp', validateSendOtp, AuthController.sendOtp);
  * @body   { email, otp, purpose }
  */
 router.post('/verify-otp', validateVerifyOtp, AuthController.verifyOtp);
+
+/**
+ * @route  POST /api/auth/forgot-password
+ * @desc   Kirim OTP reset password ke email
+ * @access Public
+ * @body   { email }
+ */
+router.post('/forgot-password', validateForgotPasswordBody, AuthController.forgotPassword);
+
+/**
+ * @route  GET /api/auth/reset-password/:token
+ * @desc   Verifikasi token dari link reset password (unik per user)
+ * @access Public
+ */
+router.get(
+  '/reset-password/:token',
+  validateResetTokenParam,
+  AuthController.verifyResetToken
+);
+
+/**
+ * @route  POST /api/auth/reset-password/:token
+ * @desc   Reset password — token di URL, body: { password, confirmPassword }
+ * @access Public
+ */
+router.post(
+  '/reset-password/:token',
+  validateResetTokenParam,
+  validateResetPasswordBody,
+  AuthController.resetPassword
+);
 
 /**
  * @route  POST /api/auth/login

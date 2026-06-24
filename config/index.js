@@ -39,6 +39,11 @@ module.exports = {
     maxAttempts:   3,
   },
 
+  passwordReset: {
+    expiryMinutes: 10,
+    frontendUrl:   process.env.FRONTEND_URL || 'http://localhost:5173',
+  },
+
   lockout: {
     maxFailedAttempts: 5,
     lockMinutes:       30,

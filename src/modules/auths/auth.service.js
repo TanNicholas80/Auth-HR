@@ -66,6 +66,10 @@ const AuthService = {
     const user = await AuthRepository.findByEmail(email);
     if (!user) throw new AppError('Email tidak ditemukan', 404);
 
+    // Jika purpose PASSWORD_RESET, user tidak boleh memiliki password reset token
+    if (purpose === 'PASSWORD_RESET' && user.PASSWORD_RESET_TOKEN !== null)
+      throw new AppError('Password reset token sudah ada', 400);
+
     // Kalau purpose EMAIL_VERIFY, user tidak boleh sudah aktif
     if (purpose === 'EMAIL_VERIFY' && user.IS_ACTIVE === 1)
       throw new AppError('Akun sudah terverifikasi', 400);
@@ -167,7 +171,34 @@ const AuthService = {
       };
     }
 
-    // (PASSWORD_RESET, dll) — hanya return verified
+    // Jika PASSWORD_RESET → buat token reset link
+    if (purpose === 'PASSWORD_RESET') {
+      const resetToken = authHelper.generatePasswordResetToken();
+      const expiresAt  = authHelper.passwordResetExpiresAt();
+
+      await AuthRepository.createPasswordResetToken({
+        userId:    user.USER_ID,
+        token:     resetToken,
+        expiresAt,
+      });
+
+      await AuthRepository.createAuditLog({
+        userId:    user.USER_ID,
+        action:    'PASSWORD_RESET',
+        status:    'SUCCESS',
+        ipAddress: meta.ip,
+        detail:    'Password reset token berhasil dibuat',
+      });
+
+      return {
+        verified:       true,
+        message:        'OTP berhasil diverifikasi. Gunakan link reset password.',
+        resetToken,
+        resetLink:      authHelper.buildResetPasswordLink(resetToken),
+        expiresAt:      expiresAt.toISOString(),
+      };
+    }
+
     return { verified: true, message: 'OTP berhasil diverifikasi', userId: user.USER_ID };
   },
 
@@ -366,6 +397,79 @@ const AuthService = {
         action:         p.ACTION,
       })),
     };
+  },
+
+  // ── 8. Forgot Password ──────────────────────────────────────
+  async forgotPassword({ email }, meta = {}) {
+    // Validasi duplikat
+    const existEmail = await AuthRepository.findByEmail(email);
+    if (!existEmail) throw new AppError('Email tidak ditemukan', 404);
+
+    // Kirim OTP email verify
+    const otp     = authHelper.generateOtp();
+    const otpHash = await argon2.hash(otp, {
+      ...config.argon2, memoryCost: 19456, timeCost: 2,
+    });
+
+    await AuthRepository.createOtp({
+      userId: existEmail.USER_ID,
+      otpHash,
+      purpose:   'PASSWORD_RESET',
+      expiresAt: authHelper.otpExpiresAt(),
+    });
+
+    await emailService.sendOtp({ to: email, username: existEmail.USERNAME, otp, purpose: 'PASSWORD_RESET' });
+
+    await AuthRepository.createAuditLog({
+      userId:    existEmail.USER_ID,
+      action:    'PASSWORD_RESET',
+      status:    'SUCCESS',
+      ipAddress: meta.ip,
+      detail:    'Password reset token berhasil dibuat',
+    });
+    
+    return {
+      userId: existEmail.USER_ID,
+      email,
+      message: `OTP reset password telah dikirim ke ${email}`,
+    };
+  },
+
+  // ── 9. VERIFY RESET TOKEN (link reset password) ───────────
+  async verifyResetToken({ token }) {
+    const user = await AuthRepository.findByPasswordResetToken(token);
+    if (!user)
+      throw new AppError('Token reset password tidak valid atau sudah kadaluarsa', 400);
+
+    return {
+      valid:     true,
+      email:     authHelper.maskEmail(user.EMAIL),
+      expiresAt: user.PASSWORD_RESET_EXPIRES,
+      message:   'Token reset password valid',
+    };
+  },
+
+  // ── 10. RESET PASSWORD ─────────────────────────────────────
+  async resetPassword({ token, password }, meta = {}) {
+    const user = await AuthRepository.findByPasswordResetToken(token);
+    if (!user)
+      throw new AppError('Token reset password tidak valid atau sudah kadaluarsa', 400);
+
+    const passwordHash = await argon2.hash(password, config.argon2);
+
+    await AuthRepository.updatePassword(user.USER_ID, passwordHash);
+    await AuthRepository.revokeAllUserTokens(user.USER_ID, 'PASSWORD_RESET');
+
+    await AuthRepository.createAuditLog({
+      userId:    user.USER_ID,
+      action:    'PASSWORD_CHANGE',
+      status:    'SUCCESS',
+      ipAddress: meta.ip,
+      userAgent: meta.userAgent,
+      detail:    'Password berhasil direset',
+    });
+
+    return { message: 'Password berhasil direset. Silakan login dengan password baru.' };
   },
 };
 

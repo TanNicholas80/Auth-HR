@@ -1,3 +1,4 @@
+const { v4: uuid } = require('uuid');
 const config       = require('../../../config');
 
 // ── Helper: generate OTP numerik ─────────────────────────────
@@ -22,6 +23,26 @@ const refreshExpiresAt = () => {
   if (str.endsWith('d')) d.setDate(d.getDate() + num);
   if (str.endsWith('h')) d.setHours(d.getHours() + num);
   return d;
+};
+
+const passwordResetExpiresAt = () => {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + config.passwordReset.expiryMinutes);
+  return d;
+};
+
+const generatePasswordResetToken = () => uuid();
+
+const maskEmail = (email) => {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}${'*'.repeat(Math.max(local.length - visible.length, 3))}@${domain}`;
+};
+
+const buildResetPasswordLink = (token) => {
+  const base = config.passwordReset.frontendUrl.replace(/\/$/, '');
+  return `${base}/reset-password/${token}`;
 };
 
 // ── Helper: build JWT payload (roles + permissions pake flat arrays) ──
@@ -72,7 +93,11 @@ module.exports = {
   generateOtp,
   otpExpiresAt,
   refreshExpiresAt,
+  passwordResetExpiresAt,
+  generatePasswordResetToken,
+  maskEmail,
+  buildResetPasswordLink,
   buildJwtPayload,
   buildAuthResponse,
-  parseExpiry
+  parseExpiry,
 };
