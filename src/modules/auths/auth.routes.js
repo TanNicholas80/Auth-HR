@@ -10,8 +10,14 @@ const {
   validateResetTokenParam,
   validateResetPasswordBody,
   validateForgotPasswordBody,
+  validateUserIdParam,
+  validateModuleParam,
+  validateModuleQuery,
+  validateUpdateRoles,
+  validateUpdatePermissions,
 } = require('./auth.validator');
 const authenticate = require('../../shared/middlewares/authenticate');
+const authorize    = require('../../shared/middlewares/authorize');
 
 const router = express.Router();
 
@@ -103,5 +109,50 @@ router.post('/logout', authenticate, validateLogout, AuthController.logout);
  * @access Private
  */
 router.get('/me', authenticate, AuthController.me);
+
+// ── AUTHORIZATION routes (wireframe: profile/auth/:userId) ──
+const authGuard = [authenticate, authorize.permissions('role:manage')];
+
+router.get('/permissions/modules', ...authGuard, AuthController.getModules);
+router.get(
+  '/permissions/modules/:module/actions',
+  ...authGuard,
+  validateModuleParam,
+  AuthController.getModuleActions
+);
+
+router.get(
+  '/profile/:userId',
+  ...authGuard,
+  validateUserIdParam,
+  AuthController.getProfile
+);
+router.get(
+  '/profile/:userId/roles',
+  ...authGuard,
+  validateUserIdParam,
+  AuthController.getRoleGrants
+);
+router.put(
+  '/profile/:userId/roles',
+  ...authGuard,
+  validateUserIdParam,
+  validateUpdateRoles,
+  AuthController.updateRoleGrants
+);
+router.get(
+  '/profile/:userId/permissions',
+  ...authGuard,
+  validateUserIdParam,
+  validateModuleQuery,
+  AuthController.getUserModulePermissions
+);
+router.put(
+  '/profile/:userId/permissions',
+  ...authGuard,
+  validateUserIdParam,
+  validateUpdatePermissions,
+  AuthController.updateUserModulePermissions
+);
 
 module.exports = router;

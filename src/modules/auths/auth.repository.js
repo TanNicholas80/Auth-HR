@@ -30,6 +30,17 @@ const AuthRepository = {
     return r.rows[0] || null;
   },
 
+  async findUserById(userId) {
+    const r = await query(
+      `SELECT user_id, username, email, full_name, is_active, created_at
+       FROM   users
+       WHERE  user_id    = :userId
+         AND  deleted_at IS NULL`,
+      { userId }
+    );
+    return r.rows[0] || null;
+  },
+
   async createUser({ username, email, passwordHash, fullName }) {
     const r = await query(
       `INSERT INTO users (user_id, username, email, password_hash, full_name)
@@ -113,16 +124,26 @@ const AuthRepository = {
       { userId }
     );
 
-    // Permissions (dari semua role yang dimiliki user)
+    // Permissions — union dari role + direct grant
     const permsResult = await query(
-      `SELECT DISTINCT p.permission_id, p.permission_code, p.module, p.action
-       FROM   user_roles      ur
-       JOIN   role_permissions rp ON rp.role_id      = ur.role_id
-       JOIN   permissions      p  ON p.permission_id  = rp.permission_id
-       JOIN   roles             r  ON r.role_id        = ur.role_id
-                                   AND r.is_active     = 1
-       WHERE  ur.user_id        = :userId
-         AND  (ur.expires_at IS NULL OR ur.expires_at > SYSTIMESTAMP)`,
+      `SELECT DISTINCT permission_id, permission_code, module, action
+       FROM (
+         SELECT p.permission_id, p.permission_code, p.module, p.action
+         FROM   user_roles      ur
+         JOIN   role_permissions rp ON rp.role_id       = ur.role_id
+         JOIN   permissions      p  ON p.permission_id = rp.permission_id
+         JOIN   roles             r  ON r.role_id        = ur.role_id
+                                     AND r.is_active     = 1
+         WHERE  ur.user_id = :userId
+           AND  (ur.expires_at IS NULL OR ur.expires_at > SYSTIMESTAMP)
+
+         UNION
+
+         SELECT p.permission_id, p.permission_code, p.module, p.action
+         FROM   user_permissions up
+         JOIN   permissions      p ON p.permission_id = up.permission_id
+         WHERE  up.user_id = :userId
+       )`,
       { userId }
     );
 
@@ -130,6 +151,139 @@ const AuthRepository = {
       roles:       rolesResult.rows,
       permissions: permsResult.rows,
     };
+  },
+
+  // ── AUTHORIZATION — role grants & module permissions ─────
+
+  async findAllActiveRoles() {
+    const r = await query(
+      `SELECT role_id, role_code, role_name
+       FROM   roles
+       WHERE  is_active = 1
+       ORDER  BY role_name`,
+      {}
+    );
+    return r.rows;
+  },
+
+  async findAssignedRoles(userId) {
+    const r = await query(
+      `SELECT r.role_id, r.role_code, r.role_name
+       FROM   user_roles ur
+       JOIN   roles      r ON r.role_id   = ur.role_id
+                           AND r.is_active = 1
+       WHERE  ur.user_id   = :userId
+         AND  (ur.expires_at IS NULL OR ur.expires_at > SYSTIMESTAMP)
+       ORDER  BY r.role_name`,
+      { userId }
+    );
+    return r.rows;
+  },
+
+  async findRolesByIds(roleIds) {
+    if (!roleIds.length) return [];
+    const r = await query(
+      `SELECT role_id, role_code, role_name
+       FROM   roles
+       WHERE  is_active = 1
+         AND  role_id IN (${roleIds.map((_, i) => `:id${i}`).join(', ')})`,
+      Object.fromEntries(roleIds.map((id, i) => [`id${i}`, id]))
+    );
+    return r.rows;
+  },
+
+  async syncUserRoles(userId, roleIds, assignedBy) {
+    const current = await this.findAssignedRoles(userId);
+    const currentIds = current.map((r) => r.ROLE_ID);
+    const targetSet = new Set(roleIds);
+    const toRemove = currentIds.filter((id) => !targetSet.has(id));
+    const toAdd    = roleIds.filter((id) => !currentIds.includes(id));
+
+    for (const roleId of toRemove) {
+      await query(
+        `DELETE FROM user_roles WHERE user_id = :userId AND role_id = :roleId`,
+        { userId, roleId }
+      );
+    }
+
+    for (const roleId of toAdd) {
+      await query(
+        `INSERT INTO user_roles (user_id, role_id, assigned_by)
+         VALUES (:userId, :roleId, :assignedBy)`,
+        { userId, roleId, assignedBy: assignedBy || null }
+      );
+    }
+
+    return { toAdd, toRemove };
+  },
+
+  async findDistinctModules() {
+    const r = await query(
+      `SELECT DISTINCT module FROM permissions ORDER BY module`,
+      {}
+    );
+    return r.rows.map((row) => row.MODULE);
+  },
+
+  async findPermissionsByModule(module) {
+    const r = await query(
+      `SELECT permission_id, action, permission_code, module
+       FROM   permissions
+       WHERE  module = :module
+       ORDER  BY action`,
+      { module }
+    );
+    return r.rows;
+  },
+
+  async findDirectPermissions(userId, module) {
+    const r = await query(
+      `SELECT p.permission_id, p.action, p.permission_code, p.module
+       FROM   user_permissions up
+       JOIN   permissions      p ON p.permission_id = up.permission_id
+       WHERE  up.user_id = :userId
+         AND  p.module   = :module
+       ORDER  BY p.action`,
+      { userId, module }
+    );
+    return r.rows;
+  },
+
+  async findPermissionsByIds(permissionIds) {
+    if (!permissionIds.length) return [];
+    const r = await query(
+      `SELECT permission_id, action, permission_code, module
+       FROM   permissions
+       WHERE  permission_id IN (${permissionIds.map((_, i) => `:id${i}`).join(', ')})`,
+      Object.fromEntries(permissionIds.map((id, i) => [`id${i}`, id]))
+    );
+    return r.rows;
+  },
+
+  async syncUserPermissions(userId, module, permissionIds, grantedBy) {
+    const current = await this.findDirectPermissions(userId, module);
+    const currentIds = current.map((p) => p.PERMISSION_ID);
+    const targetSet = new Set(permissionIds);
+    const toRemove = currentIds.filter((id) => !targetSet.has(id));
+    const toAdd    = permissionIds.filter((id) => !currentIds.includes(id));
+
+    for (const permissionId of toRemove) {
+      await query(
+        `DELETE FROM user_permissions
+         WHERE user_id = :userId AND permission_id = :permissionId`,
+        { userId, permissionId }
+      );
+    }
+
+    for (const permissionId of toAdd) {
+      await query(
+        `INSERT INTO user_permissions (user_id, permission_id, granted_by)
+         VALUES (:userId, :permissionId, :grantedBy)`,
+        { userId, permissionId, grantedBy: grantedBy || null }
+      );
+    }
+
+    return { toAdd, toRemove };
   },
 
   // ── TOKENS ────────────────────────────────────────────────

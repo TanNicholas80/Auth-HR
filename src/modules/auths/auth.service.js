@@ -471,6 +471,170 @@ const AuthService = {
 
     return { message: 'Password berhasil direset. Silakan login dengan password baru.' };
   },
+
+  // ── AUTHORIZATION — profile, role grants, module permissions ──
+
+  async _assertUserExists(userId) {
+    const user = await AuthRepository.findUserById(userId);
+    if (!user) throw new AppError('User tidak ditemukan', 404);
+    return user;
+  },
+
+  async getProfile(userId) {
+    const user = await this._assertUserExists(userId);
+    return authHelper.toProfileShape(user);
+  },
+
+  async getRoleGrants(userId) {
+    await this._assertUserExists(userId);
+
+    const [allRoles, assignedRoles] = await Promise.all([
+      AuthRepository.findAllActiveRoles(),
+      AuthRepository.findAssignedRoles(userId),
+    ]);
+
+    const assignedIds = assignedRoles.map((r) => r.ROLE_ID);
+    const allMapped   = allRoles.map(authHelper.toRoleShape);
+    const assignedMapped = assignedRoles.map(authHelper.toRoleShape);
+    const assignedSet = new Set(assignedIds);
+
+    return {
+      available: allMapped.filter((r) => !assignedSet.has(r.roleId)),
+      assigned:  assignedMapped,
+    };
+  },
+
+  async updateRoleGrants(userId, roleIds, actorId, meta = {}) {
+    await this._assertUserExists(userId);
+
+    if (roleIds.length > 0) {
+      const validRoles = await AuthRepository.findRolesByIds(roleIds);
+      if (validRoles.length !== roleIds.length) {
+        throw new AppError('Satu atau lebih role_id tidak valid', 422);
+      }
+    }
+
+    const { toAdd, toRemove } = await AuthRepository.syncUserRoles(userId, roleIds, actorId);
+
+    for (const roleId of toAdd) {
+      await AuthRepository.createAuditLog({
+        userId: actorId,
+        action: 'ROLE_ASSIGN',
+        status: 'SUCCESS',
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+        detail: `Assign role_id ${roleId} ke user_id ${userId}`,
+      });
+    }
+
+    for (const roleId of toRemove) {
+      await AuthRepository.createAuditLog({
+        userId: actorId,
+        action: 'ROLE_REMOVE',
+        status: 'SUCCESS',
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+        detail: `Cabut role_id ${roleId} dari user_id ${userId}`,
+      });
+    }
+
+    if (toAdd.length > 0 || toRemove.length > 0) {
+      await AuthRepository.revokeAllUserTokens(userId, 'ADMIN');
+    }
+
+    return this.getRoleGrants(userId);
+  },
+
+  async getModules() {
+    const modules = await AuthRepository.findDistinctModules();
+    return { modules };
+  },
+
+  async getModuleActions(module) {
+    const permissions = await AuthRepository.findPermissionsByModule(module);
+    if (permissions.length === 0) {
+      throw new AppError(`Modul "${module}" tidak ditemukan`, 404);
+    }
+
+    return {
+      module,
+      actions: permissions.map(authHelper.toPermissionShape),
+    };
+  },
+
+  async getUserModulePermissions(userId, module) {
+    await this._assertUserExists(userId);
+
+    const [allPerms, directPerms] = await Promise.all([
+      AuthRepository.findPermissionsByModule(module),
+      AuthRepository.findDirectPermissions(userId, module),
+    ]);
+
+    if (allPerms.length === 0) {
+      throw new AppError(`Modul "${module}" tidak ditemukan`, 404);
+    }
+
+    const assignedIds = directPerms.map((p) => p.PERMISSION_ID);
+    const allMapped   = allPerms.map(authHelper.toPermissionShape);
+    const assignedMapped = directPerms.map(authHelper.toPermissionShape);
+    const assignedSet = new Set(assignedIds);
+
+    return {
+      module,
+      available: allMapped.filter((p) => !assignedSet.has(p.permissionId)),
+      assigned:  assignedMapped,
+    };
+  },
+
+  async updateUserModulePermissions(userId, module, permissionIds, actorId, meta = {}) {
+    await this._assertUserExists(userId);
+
+    const modulePerms = await AuthRepository.findPermissionsByModule(module);
+    if (modulePerms.length === 0) {
+      throw new AppError(`Modul "${module}" tidak ditemukan`, 404);
+    }
+
+    const validModuleIds = new Set(modulePerms.map((p) => p.PERMISSION_ID));
+    const invalid = permissionIds.filter((id) => !validModuleIds.has(id));
+    if (invalid.length > 0) {
+      throw new AppError(
+        `permission_id tidak valid untuk modul ${module}: ${invalid.join(', ')}`,
+        422
+      );
+    }
+
+    const { toAdd, toRemove } = await AuthRepository.syncUserPermissions(
+      userId, module, permissionIds, actorId
+    );
+
+    for (const permissionId of toAdd) {
+      await AuthRepository.createAuditLog({
+        userId: actorId,
+        action: 'PERMISSION_ASSIGN',
+        status: 'SUCCESS',
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+        detail: `Assign permission_id ${permissionId} ke user_id ${userId} modul ${module}`,
+      });
+    }
+
+    for (const permissionId of toRemove) {
+      await AuthRepository.createAuditLog({
+        userId: actorId,
+        action: 'PERMISSION_REMOVE',
+        status: 'SUCCESS',
+        ipAddress: meta.ip,
+        userAgent: meta.userAgent,
+        detail: `Cabut permission_id ${permissionId} dari user_id ${userId} modul ${module}`,
+      });
+    }
+
+    if (toAdd.length > 0 || toRemove.length > 0) {
+      await AuthRepository.revokeAllUserTokens(userId, 'ADMIN');
+    }
+
+    return this.getUserModulePermissions(userId, module);
+  },
 };
 
 module.exports = AuthService;

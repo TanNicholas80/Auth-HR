@@ -111,6 +111,29 @@ const forgotPasswordBodySchema = z.object({
     .email('format email tidak valid'),
 });
 
+// ── Authorization schemas ───────────────────────────────────
+
+const userIdParamSchema = z.object({
+  userId: z.coerce.number().int().positive('userId harus bilangan positif'),
+});
+
+const moduleParamSchema = z.object({
+  module: z.string().min(1, 'module wajib diisi').max(50),
+});
+
+const moduleQuerySchema = z.object({
+  module: z.string().min(1, 'module wajib diisi').max(50),
+});
+
+const updateRolesSchema = z.object({
+  roleIds: z.array(z.number().int().positive()),
+});
+
+const updatePermissionsSchema = z.object({
+  module: z.string().min(1, 'module wajib diisi').max(50),
+  permissionIds: z.array(z.number().int().positive()),
+});
+
 // ── Middleware factory ────────────────────────────────────
 
 const validate = (schema) => (req, res, next) => {
@@ -135,6 +158,17 @@ const validateParams = (schema) => (req, res, next) => {
   next();
 };
 
+const validateQuery = (schema) => (req, res, next) => {
+  const result = schema.safeParse(req.query);
+  if (!result.success) {
+    const issues = result.error?.issues ?? result.error?.errors ?? [];
+    const errors = issues.map((e) => e.message);
+    return next(new AppError('Validasi gagal', 422, errors));
+  }
+  req.query = result.data;
+  next();
+};
+
 module.exports = {
   validateSignup:          validate(signupSchema),
   validateLogin:           validate(loginSchema),
@@ -145,4 +179,9 @@ module.exports = {
   validateResetTokenParam:   validateParams(verifyResetTokenSchema),
   validateResetPasswordBody: validate(resetPasswordBodySchema),
   validateForgotPasswordBody: validate(forgotPasswordBodySchema),
+  validateUserIdParam:       validateParams(userIdParamSchema),
+  validateModuleParam:       validateParams(moduleParamSchema),
+  validateModuleQuery:       validateQuery(moduleQuerySchema),
+  validateUpdateRoles:       validate(updateRolesSchema),
+  validateUpdatePermissions: validate(updatePermissionsSchema),
 };

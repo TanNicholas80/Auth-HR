@@ -89,6 +89,49 @@ const parseExpiry = (str) => {
   return 15 * 60 * 1000;
 };
 
+// ── Authorization helpers ─────────────────────────────────────
+
+const toProfileShape = (user) => ({
+  userId:   user.USER_ID,
+  username: user.USERNAME,
+  email:    user.EMAIL,
+});
+
+const toRoleShape = (row) => ({
+  roleId:   row.ROLE_ID,
+  roleCode: row.ROLE_CODE,
+  roleName: row.ROLE_NAME,
+});
+
+const toPermissionShape = (row) => ({
+  permissionId:   row.PERMISSION_ID,
+  action:         row.ACTION,
+  permissionCode: row.PERMISSION_CODE,
+});
+
+const diffSync = (currentIds, targetIds) => {
+  const targetSet = new Set(targetIds);
+  const currentSet = new Set(currentIds);
+  return {
+    toAdd:    targetIds.filter((id) => !currentSet.has(id)),
+    toRemove: currentIds.filter((id) => !targetSet.has(id)),
+  };
+};
+
+const splitAvailableAssigned = (allItems, assignedIds, idKey = 'id') => {
+  const assignedSet = new Set(assignedIds);
+  const assigned = [];
+  const available = [];
+
+  for (const item of allItems) {
+    const id = typeof idKey === 'function' ? idKey(item) : item[idKey];
+    if (assignedSet.has(id)) assigned.push(item);
+    else available.push(item);
+  }
+
+  return { available, assigned };
+};
+
 module.exports = {
   generateOtp,
   otpExpiresAt,
@@ -100,4 +143,9 @@ module.exports = {
   buildJwtPayload,
   buildAuthResponse,
   parseExpiry,
+  toProfileShape,
+  toRoleShape,
+  toPermissionShape,
+  diffSync,
+  splitAvailableAssigned,
 };
