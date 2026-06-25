@@ -2,12 +2,19 @@ require('dotenv').config();
 
 const express      = require('express');
 const appConfig    = require('../config');
+const path = require('path');
 const routes            = require('./routes');
 const globalErrorHandler = require('./shared/middlewares/errorHandler');
 const notFound          = require('./shared/middlewares/notFound');
 const { generalLimiter } = require('./shared/middlewares/rateLimiter');
 
 const app = express();
+
+// Serving static files, untuk localstorage kita simpan di folder uploads
+app.use(
+  `/${appConfig.storage.local.uploadDir}`,
+  express.static(path.resolve(process.cwd(), appConfig.storage.local.uploadDir))
+);
 
 // ── Middleware ─────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
